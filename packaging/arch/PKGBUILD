@@ -1,0 +1,26 @@
+# Repackages the official Nerion .deb (built by the launcher's release
+# workflow) as a native Arch package. Built by
+# .github/workflows/arch-package.yml, which fills in pkgver and the checksum.
+#
+# Unlike the AppImage, this links against the system's own glib/GTK/WebKitGTK
+# and libayatana-appindicator, so it works on rolling distros (Arch, CachyOS,
+# Manjaro, EndeavourOS) whose libraries are newer than the AppImage's bundled
+# ones.
+
+pkgname=nerion
+pkgver=0.0.0
+pkgrel=1
+pkgdesc="Nerion - Minecraft launcher"
+arch=('x86_64')
+url="https://nerionmc.com"
+license=('custom')
+depends=('webkit2gtk-4.1' 'gtk3' 'openssl' 'libayatana-appindicator')
+options=('!strip' '!debug')
+source=("Nerion_${pkgver}_amd64.deb")
+sha256sums=('SKIP')
+
+package() {
+  # makepkg already unpacked the .deb (an ar archive) into control.tar.* /
+  # data.tar.*; the payload is data.tar.*.
+  bsdtar -xf data.tar.* -C "$pkgdir"
+}
