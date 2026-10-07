@@ -7,6 +7,12 @@
 #     launcher's release workflow once the Linux bundles are uploaded.
 #   - release published: fallback for releases created by hand.
 #   - workflow_dispatch: manual (re)build for any tag; empty = latest.
+#
+# For the latest release it also uploads the package to LauncherBackend as
+# nerion-setup-linux.pkg.tar.zst (stable download link, same as the other
+# installers in the launcher's release.yml). Needs the API_BASE_URL variable
+# and the CI_ADMIN_USERNAME / CI_ADMIN_PASSWORD secrets in this repo; the
+# step is skipped while API_BASE_URL isn't set.
 name: Arch package
 
 on:
@@ -37,7 +43,7 @@ jobs:
       TAG: ${{ github.event.client_payload.tag || github.event.release.tag_name || inputs.tag }}
     steps:
       - name: Install tools
-        run: pacman -Syu --noconfirm --needed git github-cli
+        run: pacman -Syu --noconfirm --needed git github-cli jq
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -83,3 +89,27 @@ jobs:
 
       - name: Upload to release
         run: gh release upload "$TAG" /tmp/build/nerion-*.pkg.tar.zst --clobber
+
+      # Only the latest release replaces the dashboard installer, so a manual
+      # rebuild of an older tag can't roll the download link back.
+      - name: Upload to LauncherBackend (stable download link)
+        if: vars.API_BASE_URL != ''
+        env:
+          API_BASE_URL: ${{ vars.API_BASE_URL }}
+          CI_ADMIN_USERNAME: ${{ secrets.CI_ADMIN_USERNAME }}
+          CI_ADMIN_PASSWORD: ${{ secrets.CI_ADMIN_PASSWORD }}
+        run: |
+          LATEST=$(gh release view --json tagName -q .tagName)
+          if [ "$TAG" != "$LATEST" ]; then
+            echo "$TAG is not the latest release ($LATEST); skipping dashboard upload"
+            exit 0
+          fi
+          cp /tmp/build/nerion-*.pkg.tar.zst nerion-setup-linux.pkg.tar.zst
+          TOKEN=$(jq -n --arg u "$CI_ADMIN_USERNAME" --arg p "$CI_ADMIN_PASSWORD" '{username: $u, password: $p}' \
+            | curl -sf -X POST "$API_BASE_URL/auth/login" -H "Content-Type: application/json" -d @- \
+            | jq -r '.token')
+          echo "::add-mask::$TOKEN"
+          curl -sf -X POST "$API_BASE_URL/api/v1/system-assets/upload" \
+            -H "Authorization: Bearer $TOKEN" \
+            -F "file=@nerion-setup-linux.pkg.tar.zst" \
+            -F "type=INSTALLER"
