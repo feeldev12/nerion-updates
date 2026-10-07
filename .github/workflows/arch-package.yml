@@ -1,0 +1,85 @@
+# Builds a native Arch package (nerion-<ver>-1-x86_64.pkg.tar.zst) from the
+# release's .deb and attaches it to the same release.
+#
+# Lives in this public repo (not the private launcher repo) so the minutes
+# are free. Triggers:
+#   - repository_dispatch "build-arch" with {"tag": "vX.Y.Z"}: sent by the
+#     launcher's release workflow once the Linux bundles are uploaded.
+#   - release published: fallback for releases created by hand.
+#   - workflow_dispatch: manual (re)build for any tag; empty = latest.
+name: Arch package
+
+on:
+  repository_dispatch:
+    types: [build-arch]
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.1.75). Empty = latest release."
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: arch-package-${{ github.event.client_payload.tag || github.event.release.tag_name || inputs.tag || 'latest' }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.event.client_payload.tag || github.event.release.tag_name || inputs.tag }}
+    steps:
+      - name: Install tools
+        run: pacman -Syu --noconfirm --needed git github-cli
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve tag and version
+        run: |
+          if [ -z "$TAG" ]; then
+            TAG=$(gh release view --json tagName -q .tagName)
+          fi
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
+
+      # tauri-action uploads the Linux bundles a bit after the release is
+      # created, so a "release published" run can start before the .deb exists.
+      - name: Wait for the .deb asset
+        run: |
+          DEB="Nerion_${VERSION}_amd64.deb"
+          for i in $(seq 1 60); do
+            if gh release view "$TAG" --json assets -q '.assets[].name' | grep -qxF "$DEB"; then
+              echo "Found $DEB"
+              exit 0
+            fi
+            echo "Waiting for $DEB ($i/60)..."
+            sleep 30
+          done
+          echo "::error::$DEB never appeared on release $TAG"
+          exit 1
+
+      - name: Build package
+        run: |
+          useradd -m builder
+          mkdir -p /tmp/build
+          cp packaging/arch/PKGBUILD /tmp/build/
+          cd /tmp/build
+          gh release download "$TAG" -p "Nerion_${VERSION}_amd64.deb"
+          SUM=$(sha256sum "Nerion_${VERSION}_amd64.deb" | cut -d' ' -f1)
+          sed -i "s/^pkgver=.*/pkgver=${VERSION}/; s/^sha256sums=.*/sha256sums=('${SUM}')/" PKGBUILD
+          chown -R builder: /tmp/build
+          # --nodeps: we only package here; runtime deps are resolved by
+          # pacman on the user's machine.
+          su builder -c "makepkg --nodeps --noconfirm"
+          ls -l *.pkg.tar.zst
+
+      - name: Upload to release
+        run: gh release upload "$TAG" /tmp/build/nerion-*.pkg.tar.zst --clobber
