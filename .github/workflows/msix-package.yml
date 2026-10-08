@@ -1,0 +1,106 @@
+# Builds the Microsoft Store package (Nerion_<ver>_x64.msix) from the
+# release's .msi and attaches it to the same release, for uploading to
+# Partner Center by hand. The package goes up unsigned: the Store signs it,
+# which is what gets it past Smart App Control.
+#
+# Lives in this public repo (not the private launcher repo) so the minutes
+# are free, and only repackages the published .msi: no launcher source is
+# checked out here. Triggers:
+#   - repository_dispatch "build-msix" with {"tag": "vX.Y.Z"}: sent by the
+#     launcher's release workflow once the Windows bundles are uploaded.
+#   - release published: fallback for releases created by hand.
+#   - workflow_dispatch: manual (re)build for any tag; empty = latest.
+name: MSIX package
+
+on:
+  repository_dispatch:
+    types: [build-msix]
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.1.75). Empty = latest release."
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: msix-package-${{ github.event.client_payload.tag || github.event.release.tag_name || inputs.tag || 'latest' }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.event.client_payload.tag || github.event.release.tag_name || inputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve tag and version
+        run: |
+          if [ -z "$TAG" ]; then
+            TAG=$(gh release view --json tagName -q .tagName)
+          fi
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
+
+      # tauri-action uploads the Windows bundles a bit after the release is
+      # created, so a "release published" run can start before the .msi exists.
+      - name: Wait for the .msi asset
+        run: |
+          MSI="Nerion_${VERSION}_x64_en-US.msi"
+          for i in $(seq 1 60); do
+            if gh release view "$TAG" --json assets -q '.assets[].name' | grep -qxF "$MSI"; then
+              echo "Found $MSI"
+              exit 0
+            fi
+            echo "Waiting for $MSI ($i/60)..."
+            sleep 30
+          done
+          echo "::error::$MSI never appeared on release $TAG"
+          exit 1
+
+      # An administrative install (msiexec /a) only unpacks the files; nothing
+      # gets installed on the runner.
+      - name: Extract the .msi
+        shell: pwsh
+        run: |
+          gh release download $env:TAG -p "Nerion_$($env:VERSION)_x64_en-US.msi" -D dl
+          $msi = (Resolve-Path "dl/Nerion_$($env:VERSION)_x64_en-US.msi").Path
+          $target = Join-Path $PWD 'extract'
+          $p = Start-Process msiexec.exe -ArgumentList '/a', "`"$msi`"", '/qn', "TARGETDIR=`"$target`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "msiexec /a failed with $($p.ExitCode)" }
+          Get-ChildItem -Recurse extract -File | Select-Object FullName, Length
+
+      - name: Stage the package layout
+        run: |
+          EXE=$(find extract -iname nerion.exe | head -n1)
+          if [ -z "$EXE" ]; then
+            echo "::error::nerion.exe not found in the .msi"
+            exit 1
+          fi
+          mkdir -p stage
+          cp -r "$(dirname "$EXE")"/. stage/
+          cp -r packaging/msix/Assets stage/Assets
+          sed "s/__VERSION__/${VERSION}.0/" packaging/msix/AppxManifest.xml > stage/AppxManifest.xml
+          find stage -type f
+
+      - name: Pack the .msix
+        shell: pwsh
+        run: |
+          $makeappx = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\makeappx.exe" |
+            Sort-Object { [version]$_.Directory.Parent.Name } | Select-Object -Last 1
+          if (-not $makeappx) { throw 'makeappx.exe not found' }
+          & $makeappx.FullName pack /d stage /p "Nerion_$($env:VERSION)_x64.msix" /o
+          if ($LASTEXITCODE -ne 0) { throw "makeappx failed with $LASTEXITCODE" }
+
+      - name: Upload to release
+        run: gh release upload "$TAG" "Nerion_${VERSION}_x64.msix" --clobber
