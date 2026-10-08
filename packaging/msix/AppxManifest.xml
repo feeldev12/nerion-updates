@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Manifest for the Microsoft Store package. msix-package.yml replaces
+  __VERSION__ (X.Y.Z.0; the Store requires the fourth part to be 0) and packs
+  it next to nerion.exe and Assets/. Identity values come from Partner Center
+  (Product management > Product identity) and must match it exactly.
+
+  The launcher detects it runs packaged and turns its own updater off: the
+  Store delivers the updates (Store policy 10.1.5).
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap rescap">
+
+  <Identity
+    Name="Onesimpledev.Nerion"
+    Publisher="CN=87F1F1E3-FAA8-4195-A36A-E54397DBC058"
+    Version="__VERSION__"
+    ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>Nerion</DisplayName>
+    <PublisherDisplayName>Onesimpledev</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <!-- Every language listed here needs its own Store listing in Partner Center. -->
+  <Resources>
+    <Resource Language="es-ES" />
+  </Resources>
+
+  <Applications>
+    <Application Id="Nerion" Executable="nerion.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="Nerion"
+        Description="Launcher de Minecraft"
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png" />
+      <Extensions>
+        <!-- nerion:// links (login callbacks, shared instances). The launcher's
+             own registry registration doesn't reach outside the package. -->
+        <uap:Extension Category="windows.protocol">
+          <uap:Protocol Name="nerion">
+            <uap:DisplayName>Nerion</uap:DisplayName>
+          </uap:Protocol>
+        </uap:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <Capability Name="internetClient" />
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+</Package>
