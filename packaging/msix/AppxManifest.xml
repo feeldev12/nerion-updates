@@ -12,7 +12,8 @@
   xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
   xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
-  IgnorableNamespaces="uap rescap">
+  xmlns:desktop6="http://schemas.microsoft.com/appx/manifest/desktop/windows10/6"
+  IgnorableNamespaces="uap rescap desktop6">
 
   <Identity
     Name="Onesimpledev.Nerion"
@@ -24,10 +25,18 @@
     <DisplayName>Nerion</DisplayName>
     <PublisherDisplayName>Onesimpledev</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
+    <!-- Write straight to the real %APPDATA% and HKCU instead of the package's
+         private copy. With virtualization on, the Java runtime the launcher
+         unpacks into %APPDATA%\.nerion lands in the private copy, and javaw.exe
+         then fails to load the jli.dll sitting next to it (rejected by Store
+         certification). The UserGpuPreferences key the launcher writes for
+         javaw.exe also has to reach the real HKCU for the GPU driver to see it. -->
+    <desktop6:FileSystemWriteVirtualization>disabled</desktop6:FileSystemWriteVirtualization>
+    <desktop6:RegistryWriteVirtualization>disabled</desktop6:RegistryWriteVirtualization>
   </Properties>
 
   <Dependencies>
-    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0" />
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
   </Dependencies>
 
   <!-- Every language listed here needs its own Store listing in Partner Center. -->
@@ -58,5 +67,7 @@
   <Capabilities>
     <Capability Name="internetClient" />
     <rescap:Capability Name="runFullTrust" />
+    <!-- Required by the two *WriteVirtualization settings above. -->
+    <rescap:Capability Name="unvirtualizedResources" />
   </Capabilities>
 </Package>
